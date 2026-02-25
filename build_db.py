@@ -1,10 +1,8 @@
 import dpkt
-import dpkt.ip
 import socket
 import sys
 import sqlite3
 import os
-
 
 def flush_db(conn, pair_map):
     """Persist accumulated pair data to the database using an UPSERT."""
@@ -27,6 +25,45 @@ def flush_db(conn, pair_map):
     cur.executemany(sql, values)
     conn.commit()
 
+def process_packet_data(ts, buf, has_eth, pair_map):
+    """
+    Process a single packet data, updating pair_map if an IP packet is found.
+    Returns True if packet processed, False otherwise.
+    """
+    if has_eth:
+        try:
+            eth = dpkt.ethernet.Ethernet(buf)
+        except Exception:
+            return False
+        if eth.type != dpkt.ethernet.ETH_TYPE_IP:
+            return False
+        ip = eth.data
+    else:
+        version = (buf[0] >> 4) & 0xF
+        if version != 4:
+            return False
+        try:
+            ip = dpkt.ip.IP(buf)
+        except Exception:
+            return False
+
+    src_ip_bytes = getattr(ip, 'src', None)
+    dst_ip_bytes = getattr(ip, 'dst', None)
+    if src_ip_bytes is None or dst_ip_bytes is None:
+        return False
+    src_ip = socket.inet_ntoa(src_ip_bytes)
+    dst_ip = socket.inet_ntoa(dst_ip_bytes)
+    key = (src_ip, dst_ip)
+    if key not in pair_map:
+        pair_map[key] = [ts, ts, 1]
+    else:
+        first_ts, last_ts, pkt_cnt = pair_map[key]
+        if ts < first_ts:
+            first_ts = ts
+        if ts > last_ts:
+            last_ts = ts
+        pair_map[key] = [first_ts, last_ts, pkt_cnt + 1]
+    return True
 
 def process_file(filename, conn):
     """Process a single pcap file and update the database using a dict accumulator."""
@@ -48,45 +85,15 @@ def process_file(filename, conn):
         for ts, buf in reader:
             if len(buf) < 40:
                 continue
-
-            if has_eth:
-                try:
-                    eth = dpkt.ethernet.Ethernet(buf)
-                except Exception:
-                    continue
-                if eth.type != dpkt.ethernet.ETH_TYPE_IP:
-                    continue
-                ip = eth.data
-            else:
-                version = (buf[0] >> 4) & 0xF
-                if version != 4:
-                    continue
-                try:
-                    ip = dpkt.ip.IP(buf)
-                except Exception:
-                    continue
-
-            # At this point ip should be an instance of dpkt.ip.IP
-            src_ip = socket.inet_ntoa(ip.src)
-            dst_ip = socket.inet_ntoa(ip.dst)
-            key = (src_ip, dst_ip)
-            if key not in pair_map:
-                pair_map[key] = [ts, ts, 1]
-            else:
-                first_ts, last_ts, pkt_cnt = pair_map[key]
-                if ts < first_ts:
-                    first_ts = ts
-                if ts > last_ts:
-                    last_ts = ts
-                pair_map[key] = [first_ts, last_ts, pkt_cnt + 1]
-            count += 1
-            if count % batch_size == 0:
-                flush_db(conn, pair_map)
-                pair_map.clear()
+            processed = process_packet_data(ts, buf, has_eth, pair_map)
+            if processed:
+                count += 1
+                if count % batch_size == 0:
+                    flush_db(conn, pair_map)
+                    pair_map.clear()
 
         if pair_map:
             flush_db(conn, pair_map)
-
 
 def main():
     if len(sys.argv) != 3:
@@ -126,7 +133,6 @@ def main():
 
     conn.close()
     print("Done.")
-
 
 if __name__ == "__main__":
     main()
