@@ -12,16 +12,36 @@ def process_file(filename, conn):
   # Begin transaction
   cur.execute("BEGIN")
 
-  batch_size = 1000  # Adjust this based on available memory
+  batch_size = 100000  # Adjust this based on available memory
   count = 0
 
   with open(filename, 'rb') as f:
       reader = dpkt.pcap.Reader(f)
+      dlt = reader.datalink()
+      if dlt == dpkt.pcap.DLT_EN10MB:
+        has_eth = True
+      elif dlt == dpkt.pcap.DLT_RAW or dlt == 101: # For some strange reason dpkt.pcap.DLT_RAW == 12?
+        has_eth = False
+      else:
+        print(f"Unknown link-layer type {dlt} in {filename}...skipping!")
+        return
+
       for ts, buf in reader:
-          eth = dpkt.ethernet.Ethernet(buf)
-          if eth.type != dpkt.ethernet.ETH_TYPE_IP:
+          if len(buf) < 40:
               continue
-          ip = eth.data
+
+          if has_eth:
+              eth = dpkt.ethernet.Ethernet(buf)
+              if eth.type != dpkt.ethernet.ETH_TYPE_IP:
+                  continue
+              ip = eth.data
+          else:
+              version = (buf[0] >> 4) & 0xF
+              if version == 4:
+                  ip = dpkt.ip.IP(buf)
+              else:
+                  continue
+
           src_ip = socket.inet_ntoa(ip.src)
           dst_ip = socket.inet_ntoa(ip.dst)
 
