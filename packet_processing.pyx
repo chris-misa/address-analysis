@@ -9,8 +9,6 @@ cpdef bool process_packet_data(double ts, bytes buf, bint has_eth, dict pair_map
     """Cython implementation of packet parsing.
     Returns True if packet was processed and pair_map updated.
     """
-    cdef dpkt.ethernet.Ethernet eth
-    cdef dpkt.ip.IP ip
     cdef object src_ip_bytes
     cdef object dst_ip_bytes
     cdef str src_ip
@@ -19,6 +17,7 @@ cpdef bool process_packet_data(double ts, bytes buf, bint has_eth, dict pair_map
     cdef list entry
     cdef double first_ts, last_ts
     cdef int pkt_cnt
+    cdef unsigned int version
 
     if has_eth:
         try:
@@ -29,7 +28,6 @@ cpdef bool process_packet_data(double ts, bytes buf, bint has_eth, dict pair_map
             return False
         ip = eth.data
     else:
-        cdef unsigned int version
         version = (buf[0] >> 4) & 0xF
         if version != 4:
             return False

@@ -2,7 +2,6 @@ import dpkt
 import sys
 import sqlite3
 import os
-import pyximport
 
 # Attempt to import the cython compiled version of process_packet_data
 try:
@@ -10,6 +9,7 @@ try:
 except Exception:
     # Fallback: install pyximport if available and retry
     try:
+        import pyximport
         pyximport.install()
         from packet_processing import process_packet_data
     except Exception as e:
